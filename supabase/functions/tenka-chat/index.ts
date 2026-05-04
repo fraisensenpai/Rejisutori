@@ -56,7 +56,6 @@ const tool = {
                   mood: { type: "string", enum: ["great", "good", "ok", "low"] },
                 },
                 required: ["type"],
-                additionalProperties: false,
               },
             },
             log: {
@@ -68,11 +67,9 @@ const tool = {
             },
           },
           required: ["actions"],
-          additionalProperties: false,
         },
       },
       required: ["speech", "data"],
-      additionalProperties: false,
     },
   }],
 };
