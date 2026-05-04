@@ -77,10 +77,12 @@ const tool = {
   }],
 };
 
-Deno.serve(async (req) => {
+// @ts-ignore: Deno is globally available in Supabase Edge Functions
+Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
+    // @ts-ignore: Deno is globally available in Supabase Edge Functions
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
     if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
 
@@ -90,17 +92,35 @@ Deno.serve(async (req) => {
       .map((c: any) => c.name)
       .join(", ") || "(none)"}.`;
 
-    // Convert OpenAI messages to Gemini format
-    const contents = messages.map((m: any) => ({
-      role: m.role === "assistant" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+    const fullSystemPrompt = `${SYSTEM_PROMPT}\n\n${ctxLine}`;
 
-    // Insert context as the first user message
-    contents.unshift({
-      role: "user",
-      parts: [{ text: ctxLine }],
+    // Convert OpenAI messages to Gemini format and ensure alternating roles
+    const contents: any[] = [];
+    messages.forEach((m: any) => {
+      const role = m.role === "assistant" ? "model" : "user";
+      const last = contents[contents.length - 1];
+      
+      if (last && last.role === role) {
+        last.parts[0].text += "\n" + m.content;
+      } else {
+        contents.push({
+          role: role,
+          parts: [{ text: m.content }],
+        });
+      }
     });
+
+    // Gemini requires the first message to be from 'user'
+    if (contents.length > 0 && contents[0].role === "model") {
+      contents.unshift({ role: "user", parts: [{ text: "Hello" }] });
+    }
+    
+    // If empty, add a dummy user message to satisfy API
+    if (contents.length === 0) {
+      contents.push({ role: "user", parts: [{ text: "Hello" }] });
+    }
+
+    console.log("Calling Gemini API with contents length:", contents.length);
 
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
@@ -109,7 +129,7 @@ Deno.serve(async (req) => {
       },
       body: JSON.stringify({
         system_instruction: {
-          parts: [{ text: SYSTEM_PROMPT }]
+          parts: [{ text: fullSystemPrompt }]
         },
         contents: contents,
         tools: [tool],
@@ -124,8 +144,10 @@ Deno.serve(async (req) => {
 
     if (!res.ok) {
       const text = await res.text();
-      console.error("Gemini API error", res.status, text);
-      return new Response(JSON.stringify({ error: "Gemini API error" }), {
+      let errorData;
+      try { errorData = JSON.parse(text); } catch { errorData = text; }
+      console.error("Gemini API error:", res.status, errorData);
+      return new Response(JSON.stringify({ error: "Gemini API error", details: errorData }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -133,6 +155,15 @@ Deno.serve(async (req) => {
 
     const result = await res.json();
     const candidate = result?.candidates?.[0];
+    
+    if (candidate?.finishReason && candidate.finishReason !== "STOP" && !candidate.content) {
+      console.error("Gemini Finish Reason:", candidate.finishReason);
+      return new Response(JSON.stringify({ error: `AI finished with reason: ${candidate.finishReason}` }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const call = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
     
     let parsed: any = { speech: "Okay.", data: { actions: [], log: null } };
