@@ -60,7 +60,7 @@ const tool = {
               },
             },
             log: {
-              type: ["object", "null"],
+              type: "object",
               properties: {
                 text: { type: "string" },
                 mood: { type: "string", enum: ["great", "good", "ok", "low"] },
@@ -84,9 +84,16 @@ Deno.serve(async (req: Request) => {
   try {
     // @ts-ignore: Deno is globally available in Supabase Edge Functions
     const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
-    if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
+    if (!GEMINI_API_KEY) {
+      console.error("GEMINI_API_KEY is missing");
+      return new Response(JSON.stringify({ error: "GEMINI_API_KEY is not configured in Supabase Secrets" }), {
+        status: 500,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
-    const { messages = [], context = {} } = await req.json();
+    const body = await req.json();
+    const { messages = [], context = {} } = body;
 
     const ctxLine = `Context: today=${context.today}; categories=${(context.categories || [])
       .map((c: any) => c.name)
@@ -120,17 +127,11 @@ Deno.serve(async (req: Request) => {
       contents.push({ role: "user", parts: [{ text: "Hello" }] });
     }
 
-    console.log("Calling Gemini API with contents length:", contents.length);
-
     const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        system_instruction: {
-          parts: [{ text: fullSystemPrompt }]
-        },
+        system_instruction: { parts: [{ text: fullSystemPrompt }] },
         contents: contents,
         tools: [tool],
         tool_config: {
@@ -142,18 +143,20 @@ Deno.serve(async (req: Request) => {
       }),
     });
 
+    const result = await res.json();
+
     if (!res.ok) {
-      const text = await res.text();
-      let errorData;
-      try { errorData = JSON.parse(text); } catch { errorData = text; }
-      console.error("Gemini API error:", res.status, errorData);
-      return new Response(JSON.stringify({ error: "Gemini API error", details: errorData }), {
+      console.error("Gemini API error:", res.status, result);
+      return new Response(JSON.stringify({ 
+        error: "Gemini API error", 
+        status: res.status,
+        details: result 
+      }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const result = await res.json();
     const candidate = result?.candidates?.[0];
     
     if (candidate?.finishReason && candidate.finishReason !== "STOP" && !candidate.content) {
