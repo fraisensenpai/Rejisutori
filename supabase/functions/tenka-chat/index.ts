@@ -1,4 +1,4 @@
-// Tenka chat edge function — calls Lovable AI Gateway
+// Tenka chat edge function — calls Google Gemini API directly
 // Returns { speech, data: { actions, log } }
 
 const corsHeaders = {
@@ -28,8 +28,7 @@ Rules:
 - Never invent fields outside the schema.`;
 
 const tool = {
-  type: "function",
-  function: {
+  function_declarations: [{
     name: "tenka_reply",
     description: "Reply to the user with speech and structured actions.",
     parameters: {
@@ -75,15 +74,15 @@ const tool = {
       required: ["speech", "data"],
       additionalProperties: false,
     },
-  },
+  }],
 };
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
   try {
-    const LOVABLE_API_KEY = Deno.env.get("LOVABLE_API_KEY");
-    if (!LOVABLE_API_KEY) throw new Error("LOVABLE_API_KEY is not configured");
+    const GEMINI_API_KEY = Deno.env.get("GEMINI_API_KEY");
+    if (!GEMINI_API_KEY) throw new Error("GEMINI_API_KEY is not configured");
 
     const { messages = [], context = {} } = await req.json();
 
@@ -91,56 +90,57 @@ Deno.serve(async (req) => {
       .map((c: any) => c.name)
       .join(", ") || "(none)"}.`;
 
-    const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    // Convert OpenAI messages to Gemini format
+    const contents = messages.map((m: any) => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+    // Insert context as the first user message
+    contents.unshift({
+      role: "user",
+      parts: [{ text: ctxLine }],
+    });
+
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${LOVABLE_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "system", content: ctxLine },
-          ...messages,
-        ],
+        system_instruction: {
+          parts: [{ text: SYSTEM_PROMPT }]
+        },
+        contents: contents,
         tools: [tool],
-        tool_choice: { type: "function", function: { name: "tenka_reply" } },
+        tool_config: {
+          function_calling_config: {
+            mode: "ANY",
+            allowed_function_names: ["tenka_reply"]
+          }
+        }
       }),
     });
 
     if (!res.ok) {
       const text = await res.text();
-      console.error("AI gateway error", res.status, text);
-      if (res.status === 429) {
-        return new Response(JSON.stringify({ error: "Rate limited. Try again shortly." }), {
-          status: 429,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      if (res.status === 402) {
-        return new Response(JSON.stringify({ error: "AI credits exhausted." }), {
-          status: 402,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ error: "AI gateway error" }), {
+      console.error("Gemini API error", res.status, text);
+      return new Response(JSON.stringify({ error: "Gemini API error" }), {
         status: 500,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
 
-    const data = await res.json();
-    const call = data?.choices?.[0]?.message?.tool_calls?.[0];
+    const result = await res.json();
+    const candidate = result?.candidates?.[0];
+    const call = candidate?.content?.parts?.find((p: any) => p.functionCall)?.functionCall;
+    
     let parsed: any = { speech: "Okay.", data: { actions: [], log: null } };
-    if (call?.function?.arguments) {
-      try {
-        parsed = JSON.parse(call.function.arguments);
-      } catch (e) {
-        console.error("Failed parsing tool args", e);
-      }
-    } else if (data?.choices?.[0]?.message?.content) {
-      parsed.speech = data.choices[0].message.content;
+    
+    if (call?.args) {
+      parsed = call.args;
+    } else if (candidate?.content?.parts?.[0]?.text) {
+      parsed.speech = candidate.content.parts[0].text;
     }
 
     if (!parsed.data) parsed.data = { actions: [], log: null };
