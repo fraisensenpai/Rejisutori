@@ -7,25 +7,27 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS",
 };
 
-const SYSTEM_PROMPT = `You are Tenka, a warm, concise AI life companion inside the Rejisutori app.
-You help users plan habits, prayers, tasks, and reflect on their day.
-Always reply via the "tenka_reply" tool with:
-- speech: a short, friendly natural-language reply (1-3 sentences max).
-- data.actions: an array of structured actions to apply (may be empty).
-- data.log: optional daily reflection log entry, or null.
+const SYSTEM_PROMPT = `You are Tenka, a highly intelligent and supportive AI life companion inside the Rejisutori app.
+Your goal is to help users manage their habits, prayers, and daily tasks with precision and care.
 
-Action types:
-- create_task: { type, title, categoryName?, time? "HH:MM", date? "YYYY-MM-DD", days? [0-6 Sun-Sat], taskType? "habit"|"prayer"|"task" }
-- create_category: { type, name, color? "H S% L%" hsl triplet }
-- complete_task: { type, title }
-- log: { type, text, mood? "great"|"good"|"ok"|"low" }
+Capabilities:
+1. Interpret user requests and manage their schedule using the provided tools.
+2. Provide concise, warm, and helpful natural language responses.
+3. Maintain a consistent and kind personality.
+
+Tools & Actions:
+- create_task: Add new habits, prayers, or tasks.
+- update_task: Modify an existing task (title, time, category, etc.). You MUST have the task ID.
+- delete_task: Remove a task. You MUST have the task ID.
+- complete_task: Mark a task as done for today.
+- log: Record feelings, reflections, or notes.
 
 Rules:
-- If the user asks to add/track a habit, prayer, or task, emit create_task.
-- If they say "I did X" or "completed X", emit complete_task.
-- For reflections/feelings, emit a log action AND/OR data.log.
-- Keep speech kind, brief, and human. No markdown, no emoji-heavy spam.
-- Never invent fields outside the schema.`;
+- ALWAYS use the "tenka_reply" tool for your response.
+- When the user asks to change or remove something, look for the ID in the provided context.
+- Keep speech brief (1-3 sentences), warm, and human.
+- If you're unsure which task to update, ask for clarification instead of guessing.
+- For reflections, emit a "log" action AND/OR the speech response.`;
 
 const tool = {
   function_declarations: [{
@@ -43,7 +45,8 @@ const tool = {
               items: {
                 type: "object",
                 properties: {
-                  type: { type: "string", enum: ["create_task", "create_category", "complete_task", "log"] },
+                  type: { type: "string", enum: ["create_task", "update_task", "delete_task", "complete_task", "create_category", "log"] },
+                  id: { type: "string", description: "The unique ID of the task or category to update/delete." },
                   title: { type: "string" },
                   name: { type: "string" },
                   text: { type: "string" },
@@ -94,7 +97,8 @@ Deno.serve(async (req: Request) => {
 
     const ctxLine = `Context: today=${context.today}; categories=${(context.categories || [])
       .map((c: any) => c.name)
-      .join(", ") || "(none)"}.`;
+      .join(", ") || "(none)"}. 
+      Tasks: ${JSON.stringify(context.tasks || [])}`;
 
     const fullSystemPrompt = `${SYSTEM_PROMPT}\n\n${ctxLine}`;
 
@@ -124,7 +128,8 @@ Deno.serve(async (req: Request) => {
       contents.push({ role: "user", parts: [{ text: "Hello" }] });
     }
 
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
+    // Using Gemini 1.5 Pro for advanced reasoning
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro-latest:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

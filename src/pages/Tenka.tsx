@@ -9,6 +9,8 @@ import { todayStr } from "@/lib/storage";
 
 type Action =
   | { type: "create_task"; title: string; categoryName?: string; time?: string; date?: string; days?: number[]; taskType?: "habit" | "prayer" | "task" }
+  | { type: "update_task"; id: string; title?: string; categoryName?: string; time?: string; date?: string; days?: number[]; taskType?: "habit" | "prayer" | "task" }
+  | { type: "delete_task"; id: string }
   | { type: "create_category"; name: string; color?: string }
   | { type: "complete_task"; title: string }
   | { type: "log"; text: string; mood?: "great" | "good" | "ok" | "low" };
@@ -55,6 +57,22 @@ export default function Tenka() {
             days: a.days,
           });
           applied++;
+        } else if (a.type === "update_task") {
+          const patch: any = {};
+          if (a.title) patch.title = a.title;
+          if (a.time) patch.time = a.time;
+          if (a.date) patch.date = a.date;
+          if (a.days) patch.days = a.days;
+          if (a.taskType) patch.type = a.taskType;
+          if (a.categoryName) {
+            const cat = store.categories.find((c) => c.name.toLowerCase() === a.categoryName?.toLowerCase());
+            if (cat) patch.categoryId = cat.id;
+          }
+          updateTask(a.id, patch);
+          applied++;
+        } else if (a.type === "delete_task") {
+          deleteTask(a.id);
+          applied++;
         } else if (a.type === "complete_task") {
           const today = todayStr();
           const t = store.tasks.find((tt) => tt.title.toLowerCase().includes(a.title.toLowerCase()));
@@ -88,7 +106,7 @@ export default function Tenka() {
           context: {
             today: todayStr(),
             categories: store.categories.map((c) => ({ name: c.name })),
-            tasks: store.tasks.slice(-30).map((t) => ({ title: t.title, time: t.time })),
+            tasks: store.tasks.slice(-30).map((t) => ({ id: t.id, title: t.title, time: t.time })),
           },
         },
       });
