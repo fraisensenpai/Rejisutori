@@ -128,8 +128,8 @@ Deno.serve(async (req: Request) => {
       contents.push({ role: "user", parts: [{ text: "Hello" }] });
     }
 
-    // Using Gemini 1.5 Pro for advanced reasoning
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-pro-latest:generateContent?key=${GEMINI_API_KEY}`, {
+    // Using Gemini Flash for better quota availability
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${GEMINI_API_KEY}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
